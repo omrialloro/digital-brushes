@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Eye Reveal HUD (JOSEF DALAL 021391768)</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/addons/p5.dom.min.js"></script>
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.min.js"></script>
+
+  <style>
+    html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+    canvas { display:block; }
+
+    /* Buttons: we will position them in JS precisely (so no CSS translate that can cut them) */
+    .hudBtn {
+      position: absolute;
+      padding: 12px 18px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(0,0,0,0.72);
+      color: rgba(255,255,255,0.92);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      font-size: 14px;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    .hudBtn:hover { border-color: rgba(255,255,255,0.45); }
+    .hudBtnPrimary {
+      border-color: rgba(0,255,140,0.35);
+      box-shadow: 0 0 18px rgba(0,255,140,0.12);
+    }
+  </style>
+</head>
+<body>
+<script>
+/* =========================
+   CONFIG
+========================= */
+// Try remote first
+const BG_URL = "https://kalmar.org.il/wp-content/uploads/2022/01/9-1.jpg";
+// Fallback (recommended for presentation reliability)
+const BG_FALLBACK = "reveal-bg.jpg";
+
+const PREVIEW_W = 260;
+const PREVIEW_H = 195;
+const PREVIEW_PAD = 12;
+
+const MIRROR = true;
+
+// Stability
+const INFER_MS = 100;   // 10fps inference
+const CAM_W = 424;
+const CAM_H = 240;
+
+// Reveal brush
+const MAX_SPEED = 30;
+const REVEAL_MIN = 35;
+const REVEAL_MAX = 170;
+const SMOOTHING = 0.22;
+
+// Cursor (visible eye position)
+const CURSOR_SIZE = 18;
+
+// Intro
+const INTRO_SECONDS = 3;
+
+// Balls
+const CURSOR_COLLISION_RADIUS = 10;
+
+// Coverage sampling (throttled)
+const COVERAGE_EVERY_MS = 250;
+const COVERAGE_STRIDE = 14; // higher = faster, less accurate
+
+// Distance scaling: ±20%
+const DIST_MIN = 0.80;
+const DIST_MAX = 1.20;
+
+/* =========================
+   STATE
+========================= */
+let bgImg = null;
+let bgReady = false;
+let bgSource = "loading";
+let bgError = "";
+
+let video, faceMesh, camera;
+let latestLandmarks = null;
+
+let statusMsg = "booting...";
+let lastInfer = 0;
+
+let smoothX = 0, smoothY = 0;
+let prevX = 0, prevY = 0;
+let vx = 0, vy = 0, speed = 0;
+
+let veilLayer;
+
+let balls = [];
+let gameState = "intro"; // "intro" | "running" | "gameover"
+let introStartMs = 0;
+
+// UI buttons (gameover)
+let exportBtn, restartBtn;
+
+// reveal coverage
+let revealPct = 0;
+let lastCoverageMs = 0;
+
+// face-distance scaling
+let faceScaleBase = null;
+let faceScaleSmoothed = 0;
+
+// HUD readouts for distance/brush
+let distanceFactor = 1.0;
+let currentRevealRadius = 0;
+
+/* =========================
+   FaceMesh indices
+========================= */
+const RIGHT_IRIS = [469, 470, 471, 472];
+const LEFT_IRIS  = [474, 475, 476, 477];
+
+const RIGHT_EYE_MIN = [33, 133, 159, 145, 153, 154];
+const LEFT_EYE_MIN  = [362, 263, 386, 374, 380, 385];
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1);
+
+  // Reveal veil layer (starts fully covered)
+  veilLayer = createGraphics(windowWidth, windowHeight);
+  veilLayer.background(0);
+
+  // Load background (remote -> fallback)
+  loadBackground();
+
+  // Camera
+  video = createCapture(VIDEO, () => statusMsg = "camera ok");
+  video.size(CAM_W, CAM_H);
+  video.hide();
+
+  // FaceMesh
+  faceMesh = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  });
+
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6,
+  });
+
+  faceMesh.onResults((results) => {
+    const faces = results.multiFaceLandmarks;
+    if (faces && faces.length) {
+      latestLandmarks = faces[0];
+      statusMsg = "tracking: face detected";
+    } else {
+      latestLandmarks = null;
+      statusMsg = "tracking: no face";
+    }
+  });
+
+  // Throttled inference
+  camera = new Camera(video.elt, {
+    onFrame: async () => {
+      const now = performance.now();
+      if (now - lastInfer < INFER_MS) return;
+      lastInfer = now;
+      await faceMesh.send({ image: video.elt });
+    },
+    width: CAM_W,
+    height: CAM_H
+  });
+  camera.start();
+
+  smoothX = width * 0.5;
+  smoothY = height * 0.5;
+  prevX = smoothX;
+  prevY = smoothY;
+
+  initBalls(12);
+
+  // Buttons (hidden unless gameover)
+  exportBtn = createButton("Export PNG (screenshot)");
+  exportBtn.class("hudBtn hudBtnPrimary");
+  exportBtn.mousePressed(exportPNG);
+  exportBtn.hide();
+
+  restartBtn = createButton("Restart");
+  restartBtn.class("hudBtn");
+  restartBtn.mousePressed(resetGame);
+  restartBtn.hide();
+
+  introStartMs = millis();
+}
+
+function loadBackground() {
+  bgReady = false;
+  bgSource = "loading";
+  bgError = "";
+
+  loadImage(
+    BG_URL,
+    (img) => {
+      bgImg = img;
+      bgReady = true;
+      bgSource = "remote";
+    },
+    () => {
+      bgSource = "remote_failed";
+      bgError = "Remote background failed. Falling back to local asset.";
+      loadImage(
+        BG_FALLBACK,
+        (img2) => {
+          bgImg = img2;
+          bgReady = true;
+          bgSource = "local_fallback";
+        },
+        () => {
+          bgReady = false;
+          bgSource = "failed";
+          bgError = "Both remote and local background failed. Check path/assets + server.";
+        }
+      );
+    }
+  );
+}
+
+/* =========================
+   MAIN RENDER
+========================= */
+function draw() {
+  renderScene(true);
+}
+
+function renderScene(includeGameOverOverlay) {
+  if (bgReady && bgImg) {
+    drawCover(bgImg);
+  } else {
+    background(0);
+    drawMissingBgMsg();
+  }
+
+  image(veilLayer, 0, 0);
+
+  drawVideoPreviewWithOverlay();
+  drawHUD();
+
+  if (gameState === "intro") {
+    exportBtn.hide(); restartBtn.hide();
+    drawIntroScreen();
+    const elapsed = (millis() - introStartMs) / 1000;
+    if (elapsed >= INTRO_SECONDS) startRun();
+    return;
+  }
+
+  if (gameState === "gameover") {
+    if (includeGameOverOverlay) {
+      drawGameOver();
+      positionGameOverButtons();  // fixed
+      exportBtn.show();
+      restartBtn.show();
+    } else {
+      exportBtn.hide();
+      restartBtn.hide();
+    }
+    return;
+  }
+
+  exportBtn.hide(); restartBtn.hide();
+
+  if (!latestLandmarks) {
+    const cx = width/2, cy = height/2;
+    updateAndDrawBalls(cx, cy);
+    drawCursor(cx, cy, 0);
+    return;
+  }
+
+  const iris = centerOf(latestLandmarks, RIGHT_IRIS);
+  const nx = MIRROR ? (1 - iris.x) : iris.x;
+  const ny = iris.y;
+
+  const tx = map(nx, 0, 1, 0, width);
+  const ty = map(ny, 0, 1, 0, height);
+
+  smoothX = lerp(smoothX, tx, SMOOTHING);
+  smoothY = lerp(smoothY, ty, SMOOTHING);
+
+  vx = smoothX - prevX;
+  vy = smoothY - prevY;
+  speed = Math.hypot(vx, vy);
+  prevX = smoothX;
+  prevY = smoothY;
+
+  // Distance factor (±20% around baseline)
+  const rawFaceScale = computeFaceScale(latestLandmarks);
+  if (faceScaleBase === null) {
+    faceScaleBase = rawFaceScale;
+    faceScaleSmoothed = rawFaceScale;
+  }
+  faceScaleSmoothed = lerp(faceScaleSmoothed, rawFaceScale, 0.15);
+  const ratio = faceScaleSmoothed / faceScaleBase;
+  const distFactor = constrain(ratio, DIST_MIN, DIST_MAX);
+  distanceFactor = distFactor; // HUD
+
+  let revealRadius = map(constrain(speed, 0, MAX_SPEED), 0, MAX_SPEED, REVEAL_MIN, REVEAL_MAX);
+  revealRadius *= distFactor;
+  currentRevealRadius = revealRadius; // HUD
+
+  veilLayer.erase();
+  veilLayer.circle(smoothX, smoothY, revealRadius);
+  veilLayer.noErase();
+
+  updateAndDrawBalls(smoothX, smoothY);
+  drawCursor(smoothX, smoothY, speed);
+
+  const now = millis();
+  if (now - lastCoverageMs > COVERAGE_EVERY_MS) {
+    lastCoverageMs = now;
+    updateCoverage();
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  veilLayer = createGraphics(windowWidth, windowHeight);
+  veilLayer.background(0);
+}
+
+/* =========================
+   EXPORT (clean)
+========================= */
+function exportPNG() {
+  exportBtn.hide();
+  restartBtn.hide();
+  renderScene(false); // no gameover overlay
+  saveCanvas("eye-reveal-screenshot-" + Date.now(), "png");
+}
+
+/* =========================
+   COVERAGE
+========================= */
+function updateCoverage() {
+  veilLayer.loadPixels();
+  const p = veilLayer.pixels;
+  let revealed = 0;
+  let totalSamples = 0;
+
+  for (let i = 3; i < p.length; i += 4 * COVERAGE_STRIDE) {
+    totalSamples++;
+    if (p[i] < 10) revealed++;
+  }
+
+  if (totalSamples > 0) {
+    revealPct = (revealed / totalSamples) * 100;
+  }
+}
+
+/* =========================
+   FACE DISTANCE SCALE
+========================= */
+function computeFaceScale(lm) {
+  const a = lm[33];
+  const b = lm[263];
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.hypot(dx, dy);
+}
+
+/* =========================
+   INTRO / STATES
+========================= */
+function drawIntroScreen() {
+  noStroke();
+  fill(0, 210);
+  rect(0, 0, width, height);
+
+  const elapsed = (millis() - introStartMs) / 1000;
+  const remaining = Math.max(0, Math.ceil(INTRO_SECONDS - elapsed));
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+  textSize(44);
+  text("MOVE NOW!!!", width/2, height/2 - 40);
+
+  fill(0, 255, 140, 220);
+  textSize(28);
+  text(String(remaining), width/2, height/2 + 10);
+
+  fill(255, 170);
+  textSize(14);
+  text("Reveal starts automatically.", width/2, height/2 + 52);
+  textAlign(LEFT, BASELINE);
+}
+
+function startRun() {
+  gameState = "running";
+  initBalls(12);
+  veilLayer.background(0);
+
+  faceScaleBase = null;
+  faceScaleSmoothed = 0;
+
+  revealPct = 0;
+  lastCoverageMs = 0;
+
+  distanceFactor = 1.0;
+  currentRevealRadius = 0;
+}
+
+function resetGame() {
+  gameState = "intro";
+  introStartMs = millis();
+  veilLayer.background(0);
+  initBalls(12);
+
+  smoothX = width * 0.5;
+  smoothY = height * 0.5;
+  prevX = smoothX;
+  prevY = smoothY;
+  vx = vy = speed = 0;
+
+  faceScaleBase = null;
+  faceScaleSmoothed = 0;
+
+  revealPct = 0;
+  lastCoverageMs = 0;
+
+  distanceFactor = 1.0;
+  currentRevealRadius = 0;
+
+  exportBtn.hide();
+  restartBtn.hide();
+}
+
+/* =========================
+   GAME OVER + BUTTONS
+========================= */
+function drawGameOver() {
+  noStroke();
+  fill(0, 210);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+  textSize(28);
+text("Nice!!!", width/2, height/2 - 40);
+text("Brush your smile.", width/2, height/2);
+
+
+  fill(255, 170);
+  textSize(13);
+  text("Export saves a PNG of this screen.", width/2, height/2 + 20);
+
+  textAlign(LEFT, BASELINE);
+}
+
+/* FIX: no more left-cut. Position by actual pixel coordinates + clamp */
+function positionGameOverButtons() {
+  const centerY = height/2 + 52;
+
+  // We want 50px left from perfect center
+  const desiredX = (width / 2) - 50;
+
+  // Clamp so buttons never go off-screen
+  const minX = 16;
+  const maxX = width - 220; // conservative; button width is ~200
+  const x = constrain(desiredX, minX, maxX);
+
+  exportBtn.position(x, centerY);
+  restartBtn.position(x, centerY + 48);
+}
+
+/* =========================
+   HUD
+========================= */
+function drawHUD() {
+  const x = 12;
+  const y = PREVIEW_PAD + PREVIEW_H + 14;
+  const w = 430;
+  const h = 190; // increased to fit distance meter
+
+  noStroke();
+  fill(0, 170);
+  rect(x, y, w, h, 12);
+
+  fill(255);
+  textSize(14);
+  text("Eye Reveal HUD", x + 12, y + 26);
+
+  fill(255, 190);
+  textSize(12);
+  text(`${statusMsg} | state=${gameState}`, x + 12, y + 48);
+
+  fill(255, 210);
+  text(`pos: ${smoothX.toFixed(1)}, ${smoothY.toFixed(1)}`, x + 12, y + 72);
+  text(`v: ${vx.toFixed(2)}, ${vy.toFixed(2)} | speed: ${speed.toFixed(2)}`, x + 12, y + 92);
+
+  fill(0, 255, 140, 210);
+  text(`reveal: ${revealPct.toFixed(1)}%`, x + 12, y + 112);
+
+  // Distance/Brush meter (bar + numbers)
+  const barX = x + 12;
+  const barY = y + 124;
+  const barW = w - 24;
+  const barH = 8;
+
+  noStroke();
+  fill(255, 40);
+  rect(barX, barY, barW, barH, 4);
+
+  stroke(255, 120);
+  strokeWeight(1);
+  line(barX + barW/2, barY - 4, barX + barW/2, barY + barH + 4);
+
+  noStroke();
+  const norm = map(distanceFactor, DIST_MIN, DIST_MAX, 0, 1);
+  fill(0, 255, 140, 200);
+  rect(barX, barY, norm * barW, barH, 4);
+
+  fill(255, 210);
+  text(
+    `distance: ${distanceFactor.toFixed(2)}x | brush: ${Math.round(currentRevealRadius)}px`,
+    barX,
+    barY + 22
+  );
+
+  fill(255, 170);
+  text(`bg: ${bgSource}`, x + 12, y + 168);
+
+  if (!bgReady && bgError) {
+    fill(255, 120);
+    text(bgError, x + 12, y + 186);
+  }
+}
+
+function drawMissingBgMsg() {
+  noStroke();
+  fill(0, 220);
+  rect(0, 0, width, height);
+  textAlign(CENTER, CENTER);
+  fill(255);
+  textSize(16);
+  text("Loading background image…", width/2, height/2);
+  textAlign(LEFT, BASELINE);
+}
+
+/* =========================
+   CURSOR
+========================= */
+function drawCursor(x, y, spd) {
+  const t = constrain(spd / MAX_SPEED, 0, 1);
+  const r = lerp(255, 120, t);
+  const g = lerp(0,   0,   t);
+  const b = lerp(185, 45,  t);
+
+  noStroke();
+  fill(r, g, b, 40);
+  circle(x, y, CURSOR_SIZE * 3.0);
+
+  fill(r, g, b, 200);
+  circle(x, y, CURSOR_SIZE);
+
+  stroke(255, 255, 255, 90);
+  strokeWeight(1);
+  line(x - 10, y, x - 4, y);
+  line(x + 4, y, x + 10, y);
+  line(x, y - 10, x, y - 4);
+  line(x, y + 4, x, y + 10);
+}
+
+/* =========================
+   PREVIEW + OVERLAY
+========================= */
+function drawVideoPreviewWithOverlay() {
+  noFill();
+  stroke(255, 70);
+  rect(PREVIEW_PAD - 2, PREVIEW_PAD - 2, PREVIEW_W + 4, PREVIEW_H + 4, 10);
+
+  push();
+  translate(PREVIEW_PAD, PREVIEW_PAD);
+
+  if (MIRROR) {
+    translate(PREVIEW_W, 0);
+    scale(-1, 1);
+  }
+
+  noStroke();
+  image(video, 0, 0, PREVIEW_W, PREVIEW_H);
+
+  if (latestLandmarks) {
+    drawHudDots(latestLandmarks, RIGHT_EYE_MIN, PREVIEW_W, PREVIEW_H, 2.2);
+    drawHudDots(latestLandmarks, LEFT_EYE_MIN,  PREVIEW_W, PREVIEW_H, 2.2);
+
+    drawHudDots(latestLandmarks, RIGHT_IRIS, PREVIEW_W, PREVIEW_H, 3.0);
+    drawHudDots(latestLandmarks, LEFT_IRIS,  PREVIEW_W, PREVIEW_H, 3.0);
+
+    const rc = centerOf(latestLandmarks, RIGHT_IRIS);
+    hudDot(rc.x * PREVIEW_W, rc.y * PREVIEW_H, 4.2);
+    drawCrosshair(rc.x * PREVIEW_W, rc.y * PREVIEW_H, 10);
+  }
+
+  pop();
+}
+
+function drawHudDots(lm, idxs, vw, vh, r) {
+  for (const i of idxs) {
+    const p = lm[i];
+    hudDot(p.x * vw, p.y * vh, r);
+  }
+}
+
+function hudDot(x, y, r) {
+  noStroke();
+  fill(0, 255, 140, 22);
+  circle(x, y, r * 4.0);
+  fill(0, 255, 140, 210);
+  circle(x, y, r * 1.4);
+}
+
+function drawCrosshair(x, y, s) {
+  stroke(0, 255, 140, 120);
+  strokeWeight(1);
+  line(x - s, y, x - s/2, y);
+  line(x + s/2, y, x + s, y);
+  line(x, y - s, x, y - s/2);
+  line(x, y + s/2, x, y + s);
+}
+
+/* =========================
+   Balls
+========================= */
+function initBalls(n) {
+  balls = [];
+  for (let i = 0; i < n; i++) balls.push(makeBall(true));
+}
+
+function makeBall(randomY = false) {
+  return {
+    x: random(width),
+    y: randomY ? random(-height, 0) : random(-200, -20),
+    r: random(8, 18),
+    vy: random(1.4, 4.2)
+  };
+}
+
+function updateAndDrawBalls(cx, cy) {
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    b.y += b.vy;
+
+    if (b.y - b.r > height) {
+      balls[i] = makeBall(false);
+      continue;
+    }
+
+    noStroke();
+    fill(255, 220, 0, 210);
+    circle(b.x, b.y, b.r * 2);
+
+    const d = dist(cx, cy, b.x, b.y);
+    if (d < (CURSOR_COLLISION_RADIUS + b.r)) {
+      gameState = "gameover";
+      return;
+    }
+  }
+}
+
+/* =========================
+   Utils
+========================= */
+function centerOf(lm, idxs) {
+  let sx = 0, sy = 0;
+  for (const i of idxs) { sx += lm[i].x; sy += lm[i].y; }
+  return { x: sx / idxs.length, y: sy / idxs.length };
+}
+
+function drawCover(img) {
+  const cw = width, ch = height;
+  const ir = img.width / img.height;
+  const cr = cw / ch;
+
+  let w, h;
+  if (ir > cr) { h = ch; w = h * ir; }
+  else { w = cw; h = w / ir; }
+
+  const x = (cw - w) / 2;
+  const y = (ch - h) / 2;
+  image(img, x, y, w, h);
+}
+</script>
+</body>
+</html>
