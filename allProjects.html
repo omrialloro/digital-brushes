@@ -1,0 +1,1984 @@
+<!doctype html>
+<html lang="he">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Student Brush Gallery (p5)</title>
+
+  <style>
+    body{ margin:0; font-family:system-ui, Arial; background:#111; color:#eee; }
+    #ui{
+      position:fixed; top:12px; left:12px; right:12px;
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      padding:10px; background:rgba(0,0,0,0.55);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:12px; backdrop-filter: blur(8px);
+      z-index:10;
+    }
+    select, button, input[type="range"]{
+      background:#1d1d1d; color:#eee;
+      border:1px solid rgba(255,255,255,0.18);
+      border-radius:10px; padding:8px 10px; outline:none;
+    }
+    button{ cursor:pointer; }
+    .label{ opacity:0.85; font-size:14px; }
+    #canvasWrap{ position:fixed; inset:0; }
+  </style>
+</head>
+
+<body>
+  <div id="ui">
+    <span class="label">מברשת:</span>
+    <select id="brushSelect"></select>
+
+    <span class="label">גודל:</span>
+    <input id="sizeSlider" type="range" min="1" max="120" value="24" />
+    <span id="sizeVal" class="label">24</span>
+
+    <button id="clearBtn">נקה</button>
+    <button id="saveBtn">שמור PNG</button>
+
+    <span class="label" style="margin-inline-start:auto;">
+      לחץ וגרור לציור · החלף מברשת · C / X לפי מברשת
+    </span>
+  </div>
+
+  <div id="canvasWrap"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+  <script>
+    // ============================================================
+    // Helpers + Adapter
+    // ============================================================
+    function makeHelpers(p, state){
+      return {
+        getCtx: () => ({ size: state.size }),
+        clear: (v=17) => p.background(v),
+      };
+    }
+
+    function normalizeBrush(def, p, state){
+      const helpers = makeHelpers(p, state);
+
+      // brush(p, ctx)
+      if (typeof def.brush === "function"){
+        return {
+          name: def.name ?? "Unnamed",
+          setup: () => {},
+          draw: () => { if (p.mouseIsPressed) def.brush(p, helpers.getCtx()); },
+          mousePressed: () => {},
+          mouseReleased: () => {},
+          mouseDragged: () => {},
+          keyPressed: () => {},
+          clear: () => helpers.clear(17)
+        };
+      }
+
+      // attach(p, helpers)
+      if (typeof def.attach === "function"){
+        const h = def.attach(p, helpers) || {};
+        return {
+          name: def.name ?? "Unnamed",
+          setup: h.setup || (()=>{}),
+          draw: h.draw || (()=>{}),
+          mousePressed: h.mousePressed || (()=>{}),
+          mouseReleased: h.mouseReleased || (()=>{}),
+          mouseDragged: h.mouseDragged || (()=>{}),
+          keyPressed: h.keyPressed || (()=>{}),
+          clear: h.clear || (() => helpers.clear(17))
+        };
+      }
+
+      return {
+        name:"Broken brush",
+        setup:()=>{}, draw:()=>{},
+        mousePressed:()=>{}, mouseReleased:()=>{},
+        mouseDragged:()=>{}, keyPressed:()=>{},
+        clear: () => helpers.clear(17)
+      };
+    }
+
+    // ============================================================
+    // Brushes
+    // ============================================================
+    const RAW_BRUSHES = [{
+  name: "Painterly Blobs + Scribbles (student)",
+  attach: (p, helpers) => {
+    let palette;
+
+    function paintBlob(x, y, sizeK) {
+      const baseColor = palette[p.floor(p.random(palette.length))];
+
+      const baseSize = p.random(20, 130) * sizeK;
+      const blobCount = p.int(p.random(6, 16));
+
+      for (let i = 0; i < blobCount; i++) {
+        const s = baseSize * p.random(0.3, 1.1);
+        const angle = p.PI / 4 + p.random(-0.4, 0.4);
+        const distOff = p.random(-s * 0.7, s * 0.7);
+
+        const ox = p.cos(angle) * distOff + p.random(-10, 10) * sizeK;
+        const oy = p.sin(angle) * distOff + p.random(-10, 10) * sizeK;
+
+        const c = p.lerpColor(baseColor, p.color(0), p.random(0, 0.3));
+        c.setAlpha(p.random(50, 140));
+
+        p.fill(c);
+        const w = s;
+        const h = s * p.random(0.6, 1.3);
+        p.ellipse(x + ox, y + oy, w, h);
+      }
+
+      p.stroke(p.red(baseColor), p.green(baseColor), p.blue(baseColor), 35);
+      p.strokeWeight(1);
+
+      const sprayCount = p.int(p.map(baseSize, 20 * sizeK, 130 * sizeK, 60, 200));
+      for (let i = 0; i < sprayCount; i++) {
+        const r = p.random(baseSize * 0.1, baseSize * 0.8);
+        const a = p.random(p.TWO_PI);
+        p.point(x + p.cos(a) * r, y + p.sin(a) * r);
+      }
+
+      p.noStroke();
+    }
+
+    function scribble(x, y, sizeK) {
+      const accents = [
+        p.color(255, 120, 20),
+        p.color(255, 60, 180),
+        p.color(90, 255, 90),
+        p.color(180, 80, 255)
+      ];
+      const accent = accents[p.floor(p.random(accents.length))];
+
+      p.stroke(accent);
+      p.strokeWeight(p.random(0.7, 2.2) * sizeK);
+      p.noFill();
+
+      const length = p.random(30, 180) * sizeK;
+      const stepDiv = p.random(4, 10) * sizeK;
+      const steps = p.int(length / stepDiv);
+      const baseAngle = p.PI / 4 + p.random(-0.4, 0.4);
+
+      const mode = p.int(p.random(3));
+
+      p.beginShape();
+      for (let i = 0; i < steps; i++) {
+        const t = (steps <= 1) ? 0 : i / (steps - 1);
+        const d = t * length;
+
+        let nx = x + p.cos(baseAngle) * d;
+        let ny = y + p.sin(baseAngle) * d;
+
+        if (mode === 0) {
+          const amp = p.random(6, 18) * sizeK;
+          const phase = p.random(p.TWO_PI);
+          nx += p.sin(t * p.TWO_PI * p.random(1, 3) + phase) * amp;
+          ny += p.cos(t * p.TWO_PI * p.random(1, 3) + phase) * amp;
+        } else if (mode === 1) {
+          const zig = (i % 2 === 0 ? -1 : 1) * p.random(8, 20) * sizeK;
+          nx += zig * p.sin(baseAngle + p.HALF_PI);
+          ny -= zig * p.cos(baseAngle + p.HALF_PI);
+        } else {
+          const loopR = p.random(6, 16) * sizeK;
+          const loopA = t * p.TWO_PI * p.random(1, 2);
+          nx += p.cos(loopA) * loopR;
+          ny += p.sin(loopA) * loopR;
+        }
+
+        nx += p.random(-3, 3) * sizeK;
+        ny += p.random(-3, 3) * sizeK;
+
+        p.vertex(nx, ny);
+      }
+      p.endShape();
+
+      p.noStroke();
+    }
+
+    return {
+      setup: () => {
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.noStroke();
+
+        palette = [
+          p.color(220, 90, 60),
+          p.color(240, 200, 60),
+          p.color(150, 170, 210),
+          p.color(40, 40, 40),
+          p.color(250, 250, 240)
+        ];
+
+        // אם אתה רוצה לשמור 1:1 את “דף הנייר” של המברשת:
+        p.background(230, 210, 180);
+      },
+
+      draw: () => {
+        if (!p.mouseIsPressed) return;
+
+        const sizeK = p.constrain(helpers.getCtx().size / 24, 0.25, 6.0);
+
+        const brushesThisFrame = p.int(p.random(1, 4));
+        for (let i = 0; i < brushesThisFrame; i++) {
+          const ox = p.random(-25, 25) * sizeK;
+          const oy = p.random(-25, 25) * sizeK;
+          paintBlob(p.mouseX + ox, p.mouseY + oy, sizeK);
+        }
+
+        const squigglesThisFrame = p.int(p.random(0, 4));
+        for (let i = 0; i < squigglesThisFrame; i++) {
+          const sx = p.mouseX + p.random(-40, 40) * sizeK;
+          const sy = p.mouseY + p.random(-40, 40) * sizeK;
+          scribble(sx, sy, sizeK);
+        }
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") p.background(230, 210, 180);
+      },
+
+      clear: () => p.background(230, 210, 180)
+    };
+  }
+},{
+  name: "Pastel Invaders (CRT shapes)",
+  attach: (p, helpers) => {
+    let shapes = [];
+
+    function drawShape(s) {
+      const age = p.frameCount - s.created;
+
+      const pulse = 1 + 0.25 * p.sin(age * s.pulseSpeed + s.phase);
+      const r = s.baseR * pulse;
+
+      const rot = age * s.rotSpeed;
+
+      p.push();
+      p.translate(s.x, s.y);
+      p.rotate(rot);
+
+      const rr = 180 + 60 * p.sin(age * 0.03 + s.phase);
+      const gg = 120 + 60 * p.cos(age * 0.02 + s.phase);
+      const bb = 255;
+
+      p.fill(rr, gg, bb, 150);
+      p.noStroke();
+
+      p.beginShape();
+      for (let i = 0; i < s.n; i++) {
+        const angle = p.TWO_PI * i / s.n;
+        const vx = p.cos(angle) * r;
+        const vy = p.sin(angle) * r;
+        p.vertex(vx, vy);
+      }
+      p.endShape(p.CLOSE);
+
+      p.pop();
+    }
+
+    return {
+      setup: () => {
+        // היגיינה: לא להשאיר מצב ממברשות אחרות
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.angleMode(p.RADIANS);
+        p.blendMode(p.BLEND);
+
+        shapes = [];
+        p.background(20);
+      },
+
+      draw: () => {
+        // כמו המקור: מציירים מחדש כל פריים (אנימציה חיה)
+        p.background(20);
+
+        for (const s of shapes) drawShape(s);
+      },
+
+      mouseDragged: () => {
+        // חיבור סליידר גודל: מכפיל רדיוס
+        const sizeK = p.constrain(helpers.getCtx().size / 24, 0.25, 6.0);
+
+        const speed = p.dist(p.mouseX, p.mouseY, p.pmouseX, p.pmouseY);
+
+        const r = p.map(speed, 0, 40, 5, 50, true) * sizeK;
+        const n = p.int(p.map(speed, 0, 40, 3, 10));
+
+        shapes.push({
+          x: p.mouseX,
+          y: p.mouseY,
+          baseR: r,
+          n: n,
+          created: p.frameCount,
+          phase: p.random(p.TWO_PI),
+          rotSpeed: p.random(0.01, 0.03),
+          pulseSpeed: p.random(0.02, 0.06)
+        });
+
+        if (shapes.length > 4000) {
+          shapes.splice(0, shapes.length - 4000);
+        }
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          shapes = [];
+          p.background(20);
+        }
+      },
+
+      clear: () => {
+        shapes = [];
+        p.background(20);
+      }
+    };
+  }
+}
+
+,{
+  name: "Pencil Hatch Patch (student)",
+  attach: (p, helpers) => {
+    let angleDeg = 30;
+    let baseLen = 28;
+    let hatchGap = 3.5;
+    let patchWidth = 26; // נשמר (גם אם לא חובה חישובית)
+    let jitter = 1.2;
+    let density = 10;
+
+    function randomHalfStep(minVal, maxVal) {
+      const min2 = Math.round(minVal * 2);
+      const max2 = Math.round(maxVal * 2);
+      return p.random(min2, max2 + 1) / 2;
+    }
+
+    function stampHatch(cx, cy, sizeK) {
+      const a = p.radians(angleDeg + p.random(-2.5, 2.5));
+
+      const dx = p.cos(a);
+      const dy = p.sin(a);
+
+      const px = -dy;
+      const py = dx;
+
+      // סקייל עדין לפי סליידר (שומר פרופורציות)
+      const gapK = hatchGap * sizeK;
+      const lenBaseK = baseLen * sizeK;
+      const jitterK = jitter * sizeK;
+
+      for (let i = 0; i < density; i++) {
+        const off =
+          (i - (density - 1) / 2) * gapK +
+          p.random(-0.6, 0.6) * sizeK;
+
+        const len = lenBaseK + p.random(-3, 3) * sizeK;
+
+        const jx = p.random(-jitterK, jitterK);
+        const jy = p.random(-jitterK, jitterK);
+
+        const x1 = cx + jx + px * off - dx * (len / 2);
+        const y1 = cy + jy + py * off - dy * (len / 2);
+        const x2 = cx + jx + px * off + dx * (len / 2);
+        const y2 = cy + jy + py * off + dy * (len / 2);
+
+        p.stroke(0, p.random(120, 220));
+        p.strokeWeight(p.random(0.8, 1.4) * sizeK);
+        p.line(x1, y1, x2, y2);
+
+        if (p.random() < 0.25) {
+          const t = p.random(0.25, 0.75);
+          const bx = p.lerp(x1, x2, t) + p.random(-1, 1) * sizeK;
+          const by = p.lerp(y1, y2, t) + p.random(-1, 1) * sizeK;
+
+          p.stroke(0, p.random(70, 140));
+          p.strokeWeight(p.random(0.6, 1.1) * sizeK);
+          p.line(
+            bx,
+            by,
+            bx + dx * p.random(3, 8) * sizeK,
+            by + dy * p.random(3, 8) * sizeK
+          );
+        }
+      }
+    }
+
+    return {
+      setup: () => {
+        // היגיינת state כדי לא להישבר ממברשות אחרות
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+        p.stroke(0);
+        p.strokeWeight(0.5);
+        p.strokeCap(p.ROUND);
+        p.noFill();
+
+        // אל תשנה רקע כאן אם אתה רוצה רקע גלריה.
+        // אם כן רוצים לבן כמו המקור:
+        // p.background(255);
+      },
+
+      mousePressed: () => {
+        angleDeg = (angleDeg + 15) % 360;
+        baseLen = randomHalfStep(18, 42);
+        hatchGap = p.random(2.8, 4.6);
+        patchWidth = p.random(18, 34);
+        density = p.int(p.random(8, 14));
+      },
+
+      mouseDragged: () => {
+        if (p.dist(p.mouseX, p.mouseY, p.pmouseX, p.pmouseY) < 2) return;
+
+        const sizeK = p.constrain(helpers.getCtx().size / 24, 0.25, 6.0);
+        stampHatch(p.mouseX, p.mouseY, sizeK);
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          p.colorMode(p.RGB, 255,255,255,255);
+          p.background(255);
+        }
+      },
+
+      clear: () => {
+        p.background(255);
+      }
+    };
+  }
+}
+,{
+  name: "Generative Tribe Brush (agents)",
+  attach: (p, helpers) => {
+    let agents = [];
+    const numAgents = 12;
+
+    let paintLayer, trailLayer;
+
+    let paintOn = true;
+    let brushMode = 1; // 1 ink, 2 hatch, 3 splatter
+
+    function resetAgents() {
+      agents = [];
+      for (let i = 0; i < numAgents; i++) {
+        const pos = p.createVector(p.width / 2, p.height / 2);
+        const vel = p.createVector(0, 0);
+
+        const c = p.color(
+          p.map(i, 0, numAgents - 1, 40, 230),
+          p.map(i, 0, numAgents - 1, 60, 220),
+          p.map(i, 0, numAgents - 1, 200, 80)
+        );
+
+        agents.push({
+          pos,
+          vel,
+          col: c,
+          trail: [],
+          maxTrail: 55 + i * 5,
+          maxSpeed: p.map(i, 0, numAgents - 1, 12, 5),
+          maxForce: 0.55
+        });
+      }
+    }
+
+    function updateAgent(i, sizeK) {
+      const agent = agents[i];
+      let target;
+
+      if (i === 0) {
+        target = p.createVector(p.mouseX, p.mouseY);
+
+        // אם העכבר מחוץ לקנבס: מסלול אוטומטי
+        if (p.mouseX < 0 || p.mouseX > p.width || p.mouseY < 0 || p.mouseY > p.height) {
+          target.set(
+            p.width / 2 + p.cos(p.frameCount * 0.02) * 220,
+            p.height / 2 + p.sin(p.frameCount * 0.02) * 220
+          );
+        }
+      } else {
+        const leader = agents[i - 1];
+        target = leader.pos.copy();
+        if (leader.trail.length > 12) {
+          let idx = p.int(p.map(i, 1, agents.length - 1, leader.trail.length - 1, 0));
+          idx = p.constrain(idx, 0, leader.trail.length - 1);
+          target = leader.trail[idx].copy();
+        }
+      }
+
+      const desired = p5.Vector.sub(target, agent.pos);
+      const d = desired.mag();
+      if (d < 0.001) return;
+
+      desired.normalize();
+
+      // סקייל עדין לפי sizeK (כך הסליידר “נותן אנרגיה”)
+      const maxSpeed = agent.maxSpeed * p.constrain(sizeK, 0.4, 2.2);
+
+      let speed = p.map(d, 0, 300, 0, maxSpeed);
+      speed = p.constrain(speed, 0, maxSpeed);
+      desired.mult(speed);
+
+      const steer = p5.Vector.sub(desired, agent.vel);
+      steer.limit(agent.maxForce);
+
+      agent.vel.add(steer);
+      agent.pos.add(agent.vel);
+
+      agent.trail.push(agent.pos.copy());
+      if (agent.trail.length > agent.maxTrail) agent.trail.shift();
+    }
+
+    function drawAgentTrail(agent) {
+      for (let i = 0; i < agent.trail.length - 1; i++) {
+        const t = i / agent.trail.length;
+        const c = p.lerpColor(p.color(0), agent.col, t);
+        c.setAlpha(40 + t * 160);
+
+        trailLayer.stroke(c);
+        trailLayer.strokeWeight(1 + t * 3);
+
+        const p1 = agent.trail[i];
+        const p2 = agent.trail[i + 1];
+        trailLayer.line(p1.x, p1.y, p2.x, p2.y);
+      }
+    }
+
+    function inkStamp(x, y, agent, intensity, sizeK) {
+      const s = 8 * intensity * sizeK;
+      paintLayer.noStroke();
+      const c = p.color(agent.col);
+      c.setAlpha(60 + 140 * intensity);
+      paintLayer.fill(c);
+
+      for (let k = 0; k < 6; k++) {
+        paintLayer.circle(
+          x + p.random(-s, s),
+          y + p.random(-s, s),
+          p.random(2, s * 1.4)
+        );
+      }
+    }
+
+    function hatchStamp(x, y, agent, intensity, sizeK) {
+      const len = 14 * intensity * sizeK;
+      const ang = p.atan2(agent.vel.y, agent.vel.x);
+
+      const c = p.color(agent.col);
+      c.setAlpha(60 + 120 * intensity);
+
+      paintLayer.stroke(c);
+      paintLayer.strokeWeight(1);
+
+      for (let k = 0; k < 5; k++) {
+        const a = ang + p.random(-0.8, 0.8);
+        const dx = p.cos(a) * len;
+        const dy = p.sin(a) * len;
+        paintLayer.line(x - dx, y - dy, x + dx, y + dy);
+      }
+    }
+
+    function splatterStamp(x, y, agent, intensity, sizeK) {
+      const c = p.color(agent.col);
+      c.setAlpha(40 + 130 * intensity);
+      paintLayer.noStroke();
+      paintLayer.fill(c);
+
+      const count = p.int(10 + 35 * intensity);
+      const spread = (10 + 40 * intensity) * sizeK;
+
+      for (let i = 0; i < count; i++) {
+        const a = p.random(p.TWO_PI);
+        const r = p.random(0, spread);
+        paintLayer.circle(
+          x + p.cos(a) * r,
+          y + p.sin(a) * r,
+          p.random(1, 6 * intensity * sizeK)
+        );
+      }
+    }
+
+    function paintWithAgent(agent, index, sizeK) {
+      const speed = agent.vel.mag();
+      if (speed < 0.2) return;
+
+      const intensity = p.constrain(p.map(speed, 0.2, 12, 0.2, 1), 0.2, 1);
+
+      const back = agent.vel.copy().mult(-4);
+      const x = agent.pos.x + back.x;
+      const y = agent.pos.y + back.y;
+
+      if (brushMode === 1) inkStamp(x, y, agent, intensity, sizeK);
+      if (brushMode === 2) hatchStamp(x, y, agent, intensity, sizeK);
+      if (brushMode === 3) splatterStamp(x, y, agent, intensity, sizeK);
+    }
+
+    function drawAgentBody(agent, index, sizeK) {
+      const size = p.map(index, 0, agents.length - 1, 18, 8) * p.constrain(sizeK, 0.6, 1.6);
+
+      p.noStroke();
+      const glow = p.color(agent.col);
+      glow.setAlpha(90);
+      p.fill(glow);
+      p.circle(agent.pos.x, agent.pos.y, size * 2);
+
+      p.fill(255);
+      p.circle(agent.pos.x, agent.pos.y, size);
+
+      p.fill(agent.col);
+      p.circle(agent.pos.x, agent.pos.y, size * 0.6);
+    }
+
+    function clearPaint() {
+      paintLayer.background(250);
+    }
+    function clearTrail() {
+      trailLayer.background(0);
+    }
+
+    return {
+      setup: () => {
+        // היגיינת מצב
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+
+        paintLayer = p.createGraphics(p.width, p.height);
+        trailLayer = p.createGraphics(p.width, p.height);
+
+        clearPaint();
+        clearTrail();
+        resetAgents();
+      },
+
+      draw: () => {
+        // גודל מהגלריה
+        const ctx = helpers.getCtx();
+        const sizeK = p.constrain(ctx.size / 24, 0.25, 6.0);
+
+        // “נשימה” של השובל
+        trailLayer.noStroke();
+        trailLayer.fill(0, 30);
+        trailLayer.rect(0, 0, p.width, p.height);
+
+        for (let i = 0; i < agents.length; i++) {
+          updateAgent(i, sizeK);
+          drawAgentTrail(agents[i]);
+        }
+
+        if (paintOn) {
+          for (let i = 0; i < agents.length; i++) paintWithAgent(agents[i], i, sizeK);
+        }
+
+        // קומפוזיט כמו המקור
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+        p.image(paintLayer, 0, 0);
+
+        p.blendMode(p.SCREEN);
+        p.image(trailLayer, 0, 0);
+        p.blendMode(p.BLEND);
+
+        for (let i = agents.length - 1; i >= 0; i--) {
+          drawAgentBody(agents[i], i, sizeK);
+        }
+      },
+
+      mousePressed: () => {
+        // כמו המקור: ערבוב צבעים + “בעיטה”
+        for (let i = 0; i < agents.length; i++) {
+          agents[i].col = p.color(p.random(60, 255), p.random(60, 255), p.random(60, 255));
+          agents[i].vel.add(p5.Vector.random2D().mult(p.random(0.5, 2.5)));
+        }
+      },
+
+      keyPressed: () => {
+        if (p.key === " ") paintOn = !paintOn;
+        if (p.key === "1") brushMode = 1;
+        if (p.key === "2") brushMode = 2;
+        if (p.key === "3") brushMode = 3;
+
+        if (p.key === "p" || p.key === "P") clearPaint();
+        if (p.key === "t" || p.key === "T") clearTrail();
+
+        if (p.key === "c" || p.key === "C") {
+          clearPaint();
+          clearTrail();
+          resetAgents();
+        }
+      },
+
+      clear: () => {
+        clearPaint();
+        clearTrail();
+        resetAgents();
+      }
+    };
+  }
+}
+,{
+  name: "Googly Orbs Stroke (student)",
+  attach: (p, helpers) => {
+    let strokes = [];
+    let currentStroke = null;
+
+    // ----------------------------
+    // STROKE LOGIC
+    // ----------------------------
+    function addPoint(x, y) {
+      if (!currentStroke) return;
+      const pts = currentStroke.points;
+      const pos = p.createVector(x, y);
+
+      if (pts.length === 0 || pos.dist(pts[pts.length - 1].pos) > 4) {
+        pts.push({
+          pos,
+          r: 8 + currentStroke.growth
+        });
+      }
+    }
+
+    function drawOrb(x, y, r, col) {
+      // Shadow
+      p.noStroke();
+      p.fill(0, 0, 0, 28);
+      p.ellipse(x + r * 0.35, y + r * 0.4, r * 2.3);
+
+      // Main body
+      p.fill(col.r, col.g, col.b);
+      p.ellipse(x, y, r * 2);
+
+      // Highlight
+      p.fill(255, 255, 255, 120);
+      p.ellipse(x - r * 0.4, y - r * 0.4, r * 0.8);
+    }
+
+    function drawStroke(stroke) {
+      p.noStroke();
+      for (const pt of stroke.points) {
+        drawOrb(pt.pos.x, pt.pos.y, pt.r, stroke.color);
+      }
+    }
+
+    function drawEye(center, eyeR, pupilR) {
+      // Eye white
+      p.fill(255);
+      p.stroke(30);
+      p.strokeWeight(1);
+      p.ellipse(center.x, center.y, eyeR * 2);
+
+      // Pupil follows cursor
+      const dir = p.createVector(p.mouseX - center.x, p.mouseY - center.y);
+      const maxOffset = eyeR - pupilR - 2;
+
+      if (dir.mag() > maxOffset) dir.setMag(maxOffset);
+
+      p.noStroke();
+      p.fill(30);
+      p.ellipse(center.x + dir.x, center.y + dir.y, pupilR * 2);
+    }
+
+    function drawGooglyEyes(stroke) {
+      if (stroke.points.length === 0) return;
+
+      const last = stroke.points[stroke.points.length - 1];
+      const pos = last.pos;
+      const r = last.r * 0.9;
+
+      const eyeOffset = r * 0.6;
+      const eyeRadius = r * 0.45;
+      const pupilRadius = eyeRadius * 0.35;
+
+      const leftEye  = p.createVector(pos.x - eyeOffset, pos.y - r * 0.2);
+      const rightEye = p.createVector(pos.x + eyeOffset, pos.y - r * 0.2);
+
+      drawEye(leftEye, eyeRadius, pupilRadius);
+      drawEye(rightEye, eyeRadius, pupilRadius);
+    }
+
+    function randomBrushColor() {
+      // חשוב: במערכת שלך יש reset state, אבל עדיין נשמור על היגיינה
+      p.colorMode(p.HSL, 360, 100, 100, 100);
+
+      const h = p.random(360);
+      const s = p.random(40, 85);
+      const l = p.random(45, 75);
+
+      const c = p.color(h, s, l);
+
+      // חזרה ל-RGB כדי לא לשבור מברשות אחרות
+      p.colorMode(p.RGB, 255, 255, 255, 255);
+
+      return { r: p.red(c), g: p.green(c), b: p.blue(c) };
+    }
+
+    return {
+      setup: () => {
+        p.smooth();
+        // רקע קבוע כמו המקור (המקור מצייר background כל פריים)
+      },
+
+      draw: () => {
+        // background קבוע כמו המקור
+        p.colorMode(p.RGB, 255, 255, 255, 255);
+        p.blendMode(p.BLEND);
+        p.background(245);
+
+        for (const s of strokes) {
+          drawStroke(s);
+          drawGooglyEyes(s);
+        }
+      },
+
+      mousePressed: () => {
+        // אופציונלי: לחבר גודל לסליידר
+        const ctx = helpers.getCtx();
+        const sizeK = p.constrain(ctx.size / 24, 0.25, 6.0);
+
+        currentStroke = {
+          points: [],
+          growth: 0,
+          color: randomBrushColor(),
+          sizeK
+        };
+        strokes.push(currentStroke);
+        addPoint(p.mouseX, p.mouseY);
+      },
+
+      mouseDragged: () => {
+        if (!currentStroke) return;
+
+        // keep original feel, but scale with slider a bit:
+        const k = currentStroke.sizeK ?? 1;
+        currentStroke.growth += 0.35 * k;
+
+        addPoint(p.mouseX, p.mouseY);
+      },
+
+      mouseReleased: () => {
+        currentStroke = null;
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          strokes = [];
+          currentStroke = null;
+        }
+      },
+
+      clear: () => {
+        strokes = [];
+        currentStroke = null;
+        p.background(245);
+      }
+    };
+  }
+},{
+  name: "Scratch & Guess (animals)",
+  attach: (p, helpers) => {
+    // --- Assets ---
+    const imageURLs = [
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Collage_of_Nine_Dogs.jpg/960px-Collage_of_Nine_Dogs.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/800px-Cat03.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3/32/House_sparrow04.jpg/800px-House_sparrow04.jpg"
+    ];
+
+    const imageAnswers = [
+      ["כלב", "כלבים", "dog", "dogs"],
+      ["חתול", "חתולה", "cat"],
+      ["ציפור", "דרור", "bird"]
+    ];
+
+    let images = [];
+    let loaded = 0;
+    let loading = true;
+
+    // --- Layers ---
+    let bgLayer = null;
+    let maskLayer = null;
+
+    // --- Deck logic ---
+    let imageOrder = [];
+    let currentPos = 0;
+    let lastIndex = null;
+    let currentAnswers = [];
+    let wrongAttempts = 0;
+
+    // --- UI state (inside canvas) ---
+    let typed = "";
+    let feedback = "";
+    let feedbackColor = [240, 240, 240];
+
+    function uiH() {
+      // אותו רעיון כמו המקור: לא לגרד באזור ה-UI
+      // ה-UI שלך למעלה + עוד מקום לשורת טקסט
+      return 160;
+    }
+
+    function resetMask() {
+      if (!maskLayer) return;
+      maskLayer.clear();
+      maskLayer.noStroke();
+      maskLayer.fill(0);
+      maskLayer.rect(0, 0, p.width, p.height);
+    }
+
+    function shuffleArray(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = p.floor(p.random(i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    function initImageOrder() {
+      imageOrder = [];
+      for (let i = 0; i < images.length; i++) imageOrder.push(i);
+      shuffleArray(imageOrder);
+      currentPos = 0;
+      lastIndex = null;
+    }
+
+    function setCurrentImageFromDeck() {
+      if (!bgLayer || images.length === 0) return;
+
+      const idx = imageOrder[currentPos];
+      const img = images[idx];
+
+      lastIndex = idx;
+      currentAnswers = imageAnswers[idx] || [];
+      wrongAttempts = 0;
+
+      bgLayer.clear();
+      bgLayer.image(img, 0, 0, p.width, p.height);
+
+      typed = "";
+      feedback = "";
+      feedbackColor = [240, 240, 240];
+    }
+
+    function nextImageAndReset() {
+      if (images.length === 0) return;
+
+      currentPos++;
+      if (currentPos >= imageOrder.length) {
+        shuffleArray(imageOrder);
+
+        // לא לחזור על אותה תמונה ישר אחרי ערבוב
+        if (lastIndex !== null && imageOrder.length > 1 && imageOrder[0] === lastIndex) {
+          const tmp = imageOrder[0];
+          imageOrder[0] = imageOrder[1];
+          imageOrder[1] = tmp;
+        }
+        currentPos = 0;
+      }
+
+      setCurrentImageFromDeck();
+      resetMask();
+    }
+
+    function checkAnswer() {
+      if (!currentAnswers || currentAnswers.length === 0) return;
+
+      const userAns = typed.trim().toLowerCase();
+      if (userAns === "") {
+        feedback = "הקלד/י תשובה קודם.";
+        feedbackColor = [255, 180, 0];
+        return;
+      }
+
+      const ok = currentAnswers.some(ans => String(ans).toLowerCase() === userAns);
+
+      if (ok) {
+        feedback = "צדקת!";
+        feedbackColor = [0, 220, 120];
+        wrongAttempts = 0;
+      } else {
+        wrongAttempts++;
+        if (wrongAttempts < 2) {
+          feedback = "לא מדויק, נסי שוב.";
+          feedbackColor = [255, 90, 90];
+        } else {
+          feedback = "לא מדויק. התשובה: " + currentAnswers[0];
+          feedbackColor = [255, 90, 90];
+        }
+      }
+    }
+
+    function loadAllImages() {
+      loading = true;
+      loaded = 0;
+      images = new Array(imageURLs.length);
+
+      imageURLs.forEach((url, i) => {
+        p.loadImage(
+          url,
+          (img) => {
+            images[i] = img;
+            loaded++;
+            if (loaded === imageURLs.length) {
+              loading = false;
+              initImageOrder();
+              setCurrentImageFromDeck();
+              resetMask();
+            }
+          },
+          () => {
+            // גם כשלון נספר כדי לא להיתקע
+            loaded++;
+            if (loaded === imageURLs.length) {
+              loading = false;
+              // מסנן תמונות שלא נטענו
+              const ok = [];
+              const okAns = [];
+              for (let k = 0; k < images.length; k++) {
+                if (images[k]) { ok.push(images[k]); okAns.push(imageAnswers[k]); }
+              }
+              images = ok;
+              // אם נפל משהו, ניישר את המערכים
+              while (imageAnswers.length > images.length) imageAnswers.pop();
+              initImageOrder();
+              setCurrentImageFromDeck();
+              resetMask();
+            }
+          }
+        );
+      });
+    }
+
+    return {
+      setup: () => {
+        // היגיינת state
+        p.colorMode(p.RGB, 255, 255, 255, 255);
+        p.blendMode(p.BLEND);
+
+        bgLayer = p.createGraphics(p.width, p.height);
+        maskLayer = p.createGraphics(p.width, p.height);
+
+        // אפשר להשאיר את רקע הגלריה, אבל כאן זה “משחק” עם שכבות
+        bgLayer.background(220);
+        resetMask();
+
+        loadAllImages();
+      },
+
+      draw: () => {
+        // רקע ניטרלי
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+        p.background(220);
+
+        // שכבות
+        if (!loading) {
+          p.image(bgLayer, 0, 0);
+          p.image(maskLayer, 0, 0);
+        }
+
+        // UI על קנבס
+        p.noStroke();
+        p.fill(0, 0, 0, 140);
+        p.rect(0, 0, p.width, uiH());
+
+        p.fill(255);
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(14);
+
+        const line1 = "Scratch & Guess  |  גרירה לחשיפה  |  Enter בדיקה  |  N תמונה חדשה  |  C איפוס מסכה";
+        p.text(line1, 12, 12);
+
+        if (loading) {
+          p.text(`טוען תמונות... ${loaded}/${imageURLs.length}`, 12, 36);
+        } else {
+          p.text("השאלה: מה מסתתר בתמונה?", 12, 36);
+
+          // תיבת “קלט”
+          p.fill(255);
+          p.rect(12, 62, 260, 28, 8);
+          p.fill(20);
+          p.textAlign(p.LEFT, p.CENTER);
+          p.text(typed || "הקלד/י תשובה כאן...", 20, 76);
+
+          // פידבק
+          p.fill(feedbackColor[0], feedbackColor[1], feedbackColor[2]);
+          p.textAlign(p.LEFT, p.TOP);
+          p.text(feedback, 12, 98);
+
+          // אינדיקציה למברשת
+          const ctx = helpers.getCtx();
+          const brushSize = p.constrain(ctx.size, 5, 220);
+
+          p.noFill();
+          p.stroke(255);
+          p.strokeWeight(1);
+          p.circle(p.mouseX, p.mouseY, brushSize);
+        }
+      },
+
+      mouseDragged: () => {
+        if (loading) return;
+        if (p.mouseY < uiH()) return;
+
+        const ctx = helpers.getCtx();
+        const brushSize = p.constrain(ctx.size, 5, 220);
+
+        maskLayer.erase();
+        maskLayer.circle(p.mouseX, p.mouseY, brushSize);
+        maskLayer.noErase();
+      },
+
+      keyPressed: () => {
+        if (loading) return;
+
+        // פקודות
+        if (p.key === "Enter") { checkAnswer(); return; }
+        if (p.key === "n" || p.key === "N") { nextImageAndReset(); return; }
+        if (p.key === "c" || p.key === "C") { resetMask(); return; }
+
+        // עריכה
+        if (p.keyCode === p.BACKSPACE) {
+          typed = typed.slice(0, -1);
+          return;
+        }
+
+        // תווים “מדפיסים”
+        if (p.key && p.key.length === 1) {
+          typed += p.key;
+        }
+      },
+
+      clear: () => {
+        // “נקה” של הגלריה: נתחיל סבב חדש
+        if (!loading) nextImageAndReset();
+      }
+    };
+  }
+},{
+  name: "Breathing Particles (student)",
+  attach: (p, helpers) => {
+    let particles = [];
+
+    class Particle {
+      constructor(x, y, sizeK) {
+        this.x = x + p.random(-10, 10);
+        this.y = y + p.random(-10, 10);
+        this.size = p.random(5, 20) * sizeK;
+        this.alpha = 255;
+
+        // כמו המקור (רק עם p.)
+        this.color = p.color(
+          p.random(100, 20),
+          p.random(150, 255),
+          255,
+          this.alpha
+        );
+      }
+
+      update() {
+        this.alpha -= 2;
+        this.y += p.random(-0.5, 0.5);
+        this.x += p.random(-0.5, 0.5);
+      }
+
+      display() {
+        p.noStroke();
+        p.fill(this.color.levels[0], this.color.levels[1], this.color.levels[2], this.alpha);
+        p.ellipse(this.x, this.y, this.size);
+      }
+    }
+
+    return {
+      setup: () => {
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+        p.noStroke();
+        p.background(0);
+      },
+
+      draw: () => {
+        // חושך נושם
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+        p.background(0, 20);
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const pt = particles[i];
+          pt.update();
+          pt.display();
+          if (pt.alpha <= 0) particles.splice(i, 1);
+        }
+      },
+
+      mouseMoved: () => {
+        const sizeK = p.constrain(helpers.getCtx().size / 24, 0.25, 6.0);
+        for (let i = 0; i < 5; i++) {
+          particles.push(new Particle(p.mouseX, p.mouseY, sizeK));
+        }
+      },
+
+      mouseDragged: () => {
+        // גם בגרירה נייצר חלקיקים (מרגיש טבעי בגלריה)
+        const sizeK = p.constrain(helpers.getCtx().size / 24, 0.25, 6.0);
+        for (let i = 0; i < 5; i++) {
+          particles.push(new Particle(p.mouseX, p.mouseY, sizeK));
+        }
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          particles = [];
+          p.background(0);
+        }
+      },
+
+      clear: () => {
+        particles = [];
+        p.background(0);
+      }
+    };
+  }
+}
+
+,{
+  name: "SIN / COS Calligraphic",
+  attach: (p, helpers) => {
+    // מתוך הסקיצה המקורית
+    let baseSize = 24;
+    let spacing = 4;
+    let darkBg = false;
+
+    // במקום סליידרים פנימיים:
+    // - fadeAmount: קבוע (אפשר לשנות פה)
+    // - alphaVal: קבוע (אפשר לשנות פה)
+    let fadeAmount = 18;   // 1..40 בערך
+    let alphaVal = 200;    // 50..255
+
+    function clearToBg() {
+      p.background(darkBg ? 20 : 255);
+    }
+
+    function paintAlongMotion(x1, y1, x2, y2) {
+      let isSin = (p.floor(p.frameCount / 25) % 2 === 0);
+      let word = isSin ? "SIN" : "COS";
+
+      let wordColor = isSin
+        ? p.color(255, 80, 80, alphaVal)
+        : p.color(80, 120, 255, alphaVal);
+
+      let dx = x2 - x1;
+      let dy = y2 - y1;
+      let d = p.sqrt(dx*dx + dy*dy);
+      if (d === 0) d = 0.001;
+
+      let angle = p.atan2(dy, dx);
+
+      // מחברים לסליידר של הגלריה
+      const ctx = helpers.getCtx();
+      const sizeMult = p.constrain(ctx.size / 24, 0.25, 6.0);
+
+      let brushSize = (baseSize + p.map(d, 0, 50, 0, 40)) * sizeMult;
+
+      for (let t = 0; t < d; t += spacing) {
+        let amt = t / d;
+        let x = p.lerp(x1, x2, amt);
+        let y = p.lerp(y1, y2, amt);
+
+        p.push();
+        p.translate(x, y);
+        p.rotate(angle + p.random(-0.05, 0.05));
+        p.textSize(brushSize + p.random(-4, 4));
+        p.fill(wordColor);
+        p.noStroke();
+        p.text(word, 0, 0);
+        p.pop();
+      }
+    }
+
+    return {
+      setup: () => {
+        p.colorMode(p.RGB, 255,255,255,255);
+        p.blendMode(p.BLEND);
+
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textFont("Georgia");
+        clearToBg();
+      },
+
+      draw: () => {
+        // Fade layer כמו המקור (rect עם alpha)
+        p.noStroke();
+        p.fill(darkBg ? 0 : 255, fadeAmount);
+        p.rect(0, 0, p.width, p.height);
+      },
+
+      // נצייר בפועל רק כשזזים (כמו mouseMoved)
+      mouseDragged: () => {
+        paintAlongMotion(p.pmouseX, p.pmouseY, p.mouseX, p.mouseY);
+      },
+      mouseMoved: () => {
+        // ב-p5 בתוך הדפדפן לפעמים mouseMoved נקרא גם בלי תנועה משמעותית
+        if (p.mouseX === p.pmouseX && p.mouseY === p.pmouseY) return;
+        paintAlongMotion(p.pmouseX, p.pmouseY, p.mouseX, p.mouseY);
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") clearToBg();
+        if (p.key === "b" || p.key === "B") { darkBg = !darkBg; clearToBg(); }
+      },
+
+      clear: () => clearToBg()
+    };
+  }
+}
+
+,{
+  name: "4-in-1 Memory Brush (student)",
+  attach: (p, helpers) => {
+    let prevX, prevY;
+    let brushType = 1; // 1-circle, 2-square, 3-watercolor, 4-dots
+
+    function drawCrosshair(x, y) {
+      p.stroke(50);
+      p.strokeWeight(1);
+      p.line(x - 7, y, x + 7, y);
+      p.line(x, y - 5, x, y + 7);
+    }
+
+    function drawCircleBrush(x, y, r) {
+      p.noStroke();
+      p.fill(p.random(255), p.random(255), p.random(255), 200);
+      p.ellipse(x, y, r, r);
+    }
+
+    function drawSquareBrush(x, y, r) {
+      p.noStroke();
+      p.fill(p.random(255), p.random(255), p.random(255), 220);
+      p.square(x - r / 2, y - r / 2, r);
+    }
+
+    function drawWatercolorBrush(x, y, r) {
+      p.noStroke();
+      p.fill(p.random(255), p.random(255), p.random(255), 40);
+      for (let i = 0; i < 6; i++) {
+        p.ellipse(
+          x + p.random(-10, 10),
+          y + p.random(-10, 10),
+          r * p.random(0.4, 1.2)
+        );
+      }
+    }
+
+    function drawDotBrush(x, y) {
+      p.noStroke();
+      p.fill(p.random(255), p.random(255), p.random(255), 255);
+      p.ellipse(x, y, p.random(3, 8));
+    }
+
+    function drawBrush(x, y) {
+      // אופציונלי: לקשור סליידר לגודל
+      const ctx = helpers.getCtx();
+      const sizeK = p.constrain(ctx.size / 24, 0.25, 6.0);
+
+      let r = p.random(10, 35) * sizeK;
+
+      if (prevX === undefined) {
+        if (brushType === 1) drawCircleBrush(x, y, r);
+        if (brushType === 2) drawSquareBrush(x, y, r);
+        if (brushType === 3) drawWatercolorBrush(x, y, r);
+        if (brushType === 4) drawDotBrush(x, y);
+      } else {
+        const steps = 10;
+        for (let i = 0; i < steps; i++) {
+          const ix = p.lerp(prevX, x, i / steps);
+          const iy = p.lerp(prevY, y, i / steps);
+
+          if (brushType === 1) drawCircleBrush(ix, iy, r);
+          if (brushType === 2) drawSquareBrush(ix, iy, r);
+          if (brushType === 3) drawWatercolorBrush(ix, iy, r);
+          if (brushType === 4) drawDotBrush(ix, iy);
+        }
+      }
+
+      prevX = x;
+      prevY = y;
+    }
+
+    return {
+      setup: () => {
+        // חשוב: חזרה ל-RGB כדי לא להתבלבל עם HSB ממברשות אחרות
+        p.colorMode(p.RGB, 255, 255, 255, 255);
+        p.blendMode(p.BLEND);
+
+        p.background(200);
+        p.noCursor();
+      },
+
+      draw: () => {
+        // “מלבין” לאט – אפקט זיכרון/מריחה
+        p.background(255, 255, 255, 10);
+
+        if (!p.mouseIsPressed) {
+          drawCrosshair(p.mouseX, p.mouseY);
+          prevX = undefined;
+          prevY = undefined;
+          return;
+        }
+
+        drawBrush(p.mouseX, p.mouseY);
+      },
+
+      keyPressed: () => {
+        if (p.key === "1") brushType = 1;  // <-- תיקון הבאג שהיה אצלך
+        if (p.key === "2") brushType = 2;
+        if (p.key === "3") brushType = 3;
+        if (p.key === "4") brushType = 4;
+      },
+
+      clear: () => {
+        prevX = undefined;
+        prevY = undefined;
+        p.background(200);
+      }
+    };
+  }
+}
+,
+      {
+        name: "HSB Bloom Trail (student)",
+        attach: (p, helpers) => {
+          let entities = [];
+
+          class Entity {
+            constructor(x, y, sizeK) {
+              this.origin = p.createVector(x, y);
+              this.baseSize = p.random(10, 50) * sizeK;
+              this.numPetals = p.int(p.random(7, 14));
+              this.petalLength = this.baseSize * p.random(2, 4);
+              this.baseHue = p.random(270, 330);
+              this.pulseSpeed = p.random(0.006, 0.02);
+              this.rotSpeed = p.random(-0.02, 0.02);
+              this.life = 0;
+              this.noiseSeed = p.random(1000);
+            }
+
+            update() {
+              this.life++;
+              const driftAngle = p.noise(this.noiseSeed + this.life * 0.002) * p.TWO_PI * 2;
+              const driftR = 0.15;
+              this.origin.x += p.cos(driftAngle) * driftR;
+              this.origin.y += p.sin(driftAngle) * driftR;
+            }
+
+            draw() {
+              p.push();
+              p.translate(this.origin.x, this.origin.y);
+              p.rotate(this.life * this.rotSpeed);
+
+              const pulse = p.map(
+                p.sin(this.life * this.pulseSpeed * p.TWO_PI),
+                -1, 1,
+                0.8, 1.3
+              );
+              p.scale(pulse);
+
+              p.blendMode(p.ADD);
+
+              const angleStep = 360 / this.numPetals;
+              const petalHue = (this.baseHue + this.life * 0.1) % 360;
+              const sat = 60 + 20 * p.sin(this.life * 0.01);
+              const bri = 100;
+
+              p.noStroke();
+              for (let i = 0; i < this.numPetals; i++) {
+                p.push();
+                p.rotate(angleStep * i);
+                const alpha = 10 + 15 * p.sin(this.life * 0.01 + i * 0.5);
+                p.fill(petalHue, sat, bri, alpha);
+                p.ellipse(0, this.petalLength / 2, this.petalLength * 0.35, this.petalLength);
+                p.pop();
+              }
+
+              p.blendMode(p.BLEND);
+
+              const coreHue = 50;
+              const coreSat = 60;
+              const coreBri = 100;
+              const coreR = this.baseSize * 0.4;
+
+              p.noStroke();
+              p.fill(coreHue, coreSat * 0.5, coreBri, 40);
+              p.circle(0, 0, coreR * 2);
+
+              p.fill(coreHue, coreSat, coreBri, 90);
+              p.circle(0, 0, coreR);
+
+              p.fill(coreHue, coreSat * 0.2, 100, 100);
+              p.circle(0, 0, coreR * 0.4);
+
+              p.pop();
+            }
+          }
+
+          return {
+            setup: () => {
+              p.colorMode(p.HSB, 360, 100, 100, 100);
+              p.noStroke();
+              p.background(0);
+              p.frameRate(60);
+
+              // חשוב: לא משאירים HSB "דלוק" למברשות אחרות
+              p.colorMode(p.RGB, 255, 255, 255, 255);
+              p.blendMode(p.BLEND);
+            },
+
+            draw: () => {
+              // נכנסים ל-HSB רק בתוך הפריים של המברשת
+              p.colorMode(p.HSB, 360, 100, 100, 100);
+
+              p.background(0, 0, 0, 15);
+
+              const ctx = helpers.getCtx();
+              const sizeK = p.constrain(ctx.size / 24, 0.25, 6.0);
+
+              if (p.mouseIsPressed) {
+                entities.push(new Entity(p.mouseX, p.mouseY, sizeK));
+                if (entities.length > 60) entities.shift();
+              }
+
+              for (const e of entities) {
+                e.update();
+                e.draw();
+              }
+
+              p.blendMode(p.ADD);
+              const t = p.millis() * 0.003;
+              const r = (18 + 6 * p.sin(t)) * sizeK;
+              p.fill(300, 25, 100, 40);
+              p.circle(p.mouseX, p.mouseY, r);
+              p.blendMode(p.BLEND);
+
+              // מחזירים ל-RGB כדי שלא ידלוף למברשות אחרות
+              p.colorMode(p.RGB, 255, 255, 255, 255);
+              p.noTint();
+            },
+
+            keyPressed: () => {
+              if (p.key === "c" || p.key === "C") {
+                entities = [];
+                p.background(0);
+              }
+            },
+
+            clear: () => {
+              entities = [];
+              p.background(0);
+            }
+          };
+        }
+      },
+
+      // ---------------- Basic Ink ----------------
+      {
+        name: "Basic Ink",
+        brush: (p, ctx) => {
+          p.colorMode(p.RGB, 255,255,255,255);
+          p.blendMode(p.BLEND);
+          p.stroke(255);
+          p.strokeWeight(ctx.size);
+          p.line(p.pmouseX, p.pmouseY, p.mouseX, p.mouseY);
+        }
+      },
+
+      // ---------------- Spray ----------------
+      {
+        name: "Spray",
+        brush: (p, ctx) => {
+          p.colorMode(p.RGB, 255,255,255,255);
+          p.blendMode(p.BLEND);
+          p.noStroke();
+          p.fill(255, 35);
+          for (let i=0; i<80; i++){
+            const a = p.random(p.TWO_PI);
+            const r = p.random(ctx.size * 2);
+            p.circle(
+              p.mouseX + Math.cos(a)*r,
+              p.mouseY + Math.sin(a)*r,
+              p.random(1,3)
+            );
+          }
+        }
+      },
+
+      // ---------------- Rake ----------------
+      {
+        name: "Rake",
+        brush: (p, ctx) => {
+          p.colorMode(p.RGB, 255,255,255,255);
+          p.blendMode(p.BLEND);
+          p.stroke(255, 180);
+          p.strokeWeight(2);
+          const n = 12;
+          for (let i=0; i<n; i++){
+            const t = (i/(n-1) - 0.5) * ctx.size*2;
+            p.line(p.pmouseX + t, p.pmouseY, p.mouseX + t, p.mouseY);
+          }
+        }
+      },
+
+      // ---------------- Glow Trails ----------------
+      {
+        name: "Glow Trails",
+        attach: (p, helpers) => {
+          let trails = [];
+          let palette = [];
+          let time = 0;
+          const pick = (arr) => arr[p.floor(p.random(arr.length))];
+
+          return {
+            setup: () => {
+              // חשוב: RGB לפני color() כדי למנוע הפתעות
+              p.colorMode(p.RGB, 255,255,255,255);
+
+              p.background(15, 10, 30);
+              palette = [
+                p.color(180, 100, 255, 80),
+                p.color(255, 180, 220, 90),
+                p.color(180, 230, 255, 80),
+                p.color(220, 255, 200, 70),
+                p.color(255, 220, 180, 80),
+                p.color(200, 180, 255, 90)
+              ];
+              p.noCursor();
+              p.blendMode(p.ADD);
+            },
+
+            draw: () => {
+              p.colorMode(p.RGB, 255,255,255,255);
+
+              p.drawingContext.globalCompositeOperation = "source-over";
+              p.noStroke();
+              p.fill(15, 10, 30, 8);
+              p.rect(0, 0, p.width, p.height);
+              p.blendMode(p.ADD);
+
+              time += 0.015;
+
+              const ctx = helpers.getCtx();
+              const sizeK = p.constrain(ctx.size / 24, 0.25, 4.0);
+
+              if (p.mouseIsPressed) {
+                const speed = p.dist(p.mouseX, p.mouseY, p.pmouseX, p.pmouseY);
+                const pressure = p.constrain(speed, 0, 50);
+                const count = p.floor(p.map(pressure, 0, 50, 2, 12));
+
+                for (let i = 0; i < count; i++) {
+                  const angle = p.random(p.TWO_PI);
+                  const offset = p.random(5, 30) * sizeK;
+                  const life = p.random(60, 180);
+
+                  trails.push({
+                    x: p.mouseX + p.cos(angle) * offset * p.random(0.3, 1),
+                    y: p.mouseY + p.sin(angle) * offset * p.random(0.3, 1),
+                    vx: (p.mouseX - p.pmouseX) * p.random(0.1, 0.4),
+                    vy: (p.mouseY - p.pmouseY) * p.random(0.1, 0.4),
+                    size: p.random(10, 60) * p.map(pressure, 0, 50, 0.5, 1.5) * sizeK,
+                    life: life,
+                    maxLife: life,
+                    color: pick(palette),
+                    pulsePhase: p.random(p.TWO_PI),
+                    spin: p.random(-0.05, 0.05)
+                  });
+                }
+              }
+
+              for (let i = trails.length - 1; i >= 0; i--) {
+                const t = trails[i];
+                t.x += t.vx; t.y += t.vy;
+                t.vx *= 0.96; t.vy *= 0.96;
+                t.life--; t.pulsePhase += 0.05;
+
+                if (t.life <= 0) { trails.splice(i, 1); continue; }
+
+                const alpha = p.map(t.life, 0, t.maxLife * 0.7, 0, 255);
+                const pulse = 1 + 0.3 * p.sin(t.pulsePhase + time);
+                const size = t.size * pulse * p.map(t.life, 0, t.maxLife, 0.3, 1);
+
+                p.push();
+                p.translate(t.x, t.y);
+                p.rotate(p.frameCount * t.spin);
+
+                p.noStroke();
+                p.fill(p.red(t.color), p.green(t.color), p.blue(t.color), alpha * 0.8);
+                p.ellipse(0, 0, size * 0.8);
+
+                for (let j = 3; j > 0; j--) {
+                  p.fill(p.red(t.color), p.green(t.color), p.blue(t.color), alpha * 0.15 / j);
+                  p.ellipse(0, 0, size * (1 + j * 0.4));
+                }
+
+                if (t.life > t.maxLife * 0.7) {
+                  p.fill(255, 255, 255, alpha * 2);
+                  p.ellipse(0, 0, size * 0.2);
+                }
+                p.pop();
+              }
+
+              if (p.mouseIsPressed) {
+                const breath = 1 + 0.2 * p.sin(time * 3);
+                const c = pick(palette);
+                p.noFill();
+                p.stroke(p.red(c), p.green(c), p.blue(c), 100);
+                p.strokeWeight(3);
+                p.ellipse(p.mouseX, p.mouseY, 30 * breath * sizeK);
+                p.strokeWeight(1);
+                p.ellipse(p.mouseX, p.mouseY, 50 * breath * sizeK);
+              } else {
+                const floatX = p.mouseX + p.sin(time) * 10;
+                const floatY = p.mouseY + p.cos(time * 0.7) * 10;
+                p.fill(255, 255, 255, 50);
+                p.noStroke();
+                p.ellipse(floatX, floatY, 12 * sizeK);
+                p.fill(255, 255, 255, 100);
+                p.ellipse(floatX, floatY, 6 * sizeK);
+              }
+            },
+
+            keyPressed: () => {
+              if (p.key === "c" || p.key === "C") {
+                p.background(15, 10, 30);
+                trails = [];
+              }
+              if (p.key === "x" || p.key === "X") {
+                p.noStroke();
+                p.fill(15, 10, 30, 30);
+                p.rect(0, 0, p.width, p.height);
+              }
+            },
+
+            clear: () => {
+              p.background(15, 10, 30);
+              trails = [];
+            }
+          };
+        }
+      },
+
+      // ---------------- Flower Brush ----------------
+      {
+        name: "Flower Brush",
+        attach: (p, helpers) => {
+          p.angleMode(p.DEGREES);
+
+          function drawFlower(centerX, centerY, sizeK) {
+            p.colorMode(p.RGB, 255,255,255,255);
+
+            const petalColor = p.color(p.random(255), p.random(255), p.random(255), 180);
+            const centerColor = p.color(255, 200, 0);
+            const numPetals = p.floor(p.random(5, 12));
+            const petalLength = p.random(15, 40) * sizeK;
+            const flowerSize = p.random(0.5, 1.5);
+
+            p.push();
+            p.translate(centerX, centerY);
+            p.scale(flowerSize);
+            p.noStroke();
+            p.fill(petalColor);
+
+            const angleStep = 360 / numPetals;
+            for (let i = 0; i < numPetals; i++) {
+              p.rotate(angleStep);
+              p.ellipse(0, petalLength / 2, petalLength / 2, petalLength);
+            }
+
+            p.fill(centerColor);
+            p.ellipse(0, 0, petalLength / 3, petalLength / 3);
+            p.pop();
+          }
+
+          return {
+            draw: () => {
+              if (!p.mouseIsPressed) return;
+              const ctx = helpers.getCtx();
+              const sizeK = p.constrain(ctx.size / 24, 0.25, 5.0);
+
+              const numFlowers = p.floor(p.random(1, 4));
+              const spread = 50 * sizeK;
+
+              for (let i = 0; i < numFlowers; i++) {
+                const offsetX = p.random(-spread / 2, spread / 2);
+                const offsetY = p.random(-spread / 2, spread / 2);
+                drawFlower(p.mouseX + offsetX, p.mouseY + offsetY, sizeK);
+              }
+            },
+
+            clear: () => helpers.clear(17)
+          };
+        }
+      },
+
+      // ---------------- Growing Pattern Brush (1:1) ----------------
+      {
+        name: "Growing Pattern Brush",
+        attach: (p) => {
+          let brushSize = 2;
+          let growing = false;
+
+          return {
+            setup: () => {
+              p.background(10);
+              p.rectMode(p.CENTER);
+              p.noStroke();
+            },
+
+            mousePressed: () => {
+              brushSize = 2;
+              growing = true;
+            },
+
+            mouseReleased: () => {
+              growing = false;
+            },
+
+            draw: () => {
+              if (!p.mouseIsPressed) return;
+
+              if (growing) {
+                brushSize += 1;
+                brushSize = p.constrain(brushSize, 2, 40);
+              }
+
+              const count = p.floor(p.map(brushSize, 2, 40, 3, 20));
+              const angle = p.atan2(p.mouseY - p.pmouseY, p.mouseX - p.pmouseX);
+
+              for (let i = 0; i < count; i++) {
+                const offX = p.random(-brushSize, brushSize);
+                const offY = p.random(-brushSize, brushSize);
+
+                const c = p.random();
+                if (c < 0.33) p.fill(240, 0, 0);
+                else if (c < 0.66) p.fill(200, 40, 40);
+                else p.fill(40, 60, 120);
+
+                p.push();
+                p.translate(p.mouseX + offX, p.mouseY + offY);
+                p.rotate(angle + p.random(-0.3, 0.3));
+
+                const t = p.random();
+
+                if (t < 0.25) {
+                  p.rect(0, 0, p.random(brushSize * 0.2, brushSize));
+                } else if (t < 0.5) {
+                  p.noFill();
+                  p.stroke(255, 180);
+                  p.strokeWeight(5);
+                  p.rect(0, 0, p.random(brushSize * 0.2, brushSize));
+                  p.noStroke();
+                } else if (t < 0.75) {
+                  p.stroke(255, 180);
+                  p.strokeWeight(1);
+                  p.line(-brushSize/3, -brushSize/3,  brushSize/3,  brushSize/3);
+                  p.line(-brushSize/3,  brushSize/3,  brushSize/3, -brushSize/3);
+                  p.noStroke();
+                } else {
+                  for (let d = 0; d < 4; d++) {
+                    p.ellipse(
+                      p.random(-brushSize/4, brushSize/4),
+                      p.random(-brushSize/4, brushSize/4),
+                      brushSize * 0.1
+                    );
+                  }
+                }
+
+                p.pop();
+              }
+            },
+
+            clear: () => p.background(10)
+          };
+        }
+      }
+    ];
+
+    // ============================================================
+    // App
+    // ============================================================
+    const ui = {};
+    const state = { size: 24, activeIndex: 0 };
+    let active = null;
+
+    new p5((p) => {
+
+      // איפוס state גלובלי של p5 כדי שמברשות לא "ילכלכו" אחת את השנייה
+      const resetP5State = () => {
+        p.colorMode(p.RGB, 255, 255, 255, 255);
+        p.blendMode(p.BLEND);
+        p.angleMode(p.RADIANS);
+        p.rectMode(p.CORNER);
+        p.ellipseMode(p.CENTER);
+        p.strokeCap(p.ROUND);
+        p.strokeJoin(p.ROUND);
+        p.strokeWeight(1);
+        p.noTint();
+      };
+
+      const activate = (idx) => {
+        state.activeIndex = idx;
+
+        resetP5State();
+        active = normalizeBrush(RAW_BRUSHES[idx], p, state);
+
+        // reset גם לפני וגם אחרי setup כדי למנוע "זליגות" מהקודם/מהחדש
+        resetP5State();
+        active.setup?.();
+        resetP5State();
+      };
+
+      p.setup = () => {
+        const c = p.createCanvas(window.innerWidth, window.innerHeight);
+        c.parent("canvasWrap");
+        p.background(17);
+
+        ui.select = document.getElementById("brushSelect");
+        ui.size = document.getElementById("sizeSlider");
+        ui.sizeVal = document.getElementById("sizeVal");
+        ui.clearBtn = document.getElementById("clearBtn");
+        ui.saveBtn = document.getElementById("saveBtn");
+
+        RAW_BRUSHES.forEach((b, i) => {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = b.name || ("Brush " + (i+1));
+          ui.select.appendChild(opt);
+        });
+
+        ui.select.value = "0";
+        activate(0);
+
+        ui.select.addEventListener("change", (e) => activate(Number(e.target.value) || 0));
+        ui.size.addEventListener("input", (e) => {
+          state.size = Number(e.target.value);
+          ui.sizeVal.textContent = String(state.size);
+        });
+
+        ui.clearBtn.addEventListener("click", () => {
+          if (active?.clear) active.clear();
+          else p.background(17);
+        });
+
+        ui.saveBtn.addEventListener("click", () => p.saveCanvas("brush_gallery", "png"));
+      };
+
+      p.draw = () => {
+        active?.draw?.();
+        // reset בסוף כל פריים כדי לא להשאיר colorMode/blendMode דלוקים
+        resetP5State();
+      };
+
+      p.keyPressed = () => active?.keyPressed?.();
+      p.mousePressed  = () => active?.mousePressed?.();
+      p.mouseReleased = () => active?.mouseReleased?.();
+      p.mouseDragged  = () => active?.mouseDragged?.();
+
+      p.windowResized = () => {
+        const prev = p.get();
+        p.resizeCanvas(window.innerWidth, window.innerHeight);
+        p.background(17);
+        p.image(prev, 0, 0);
+      };
+    });
+  </script>
+</body>
+</html>
