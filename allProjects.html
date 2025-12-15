@@ -241,6 +241,56 @@
     };
   }
 },{
+  name: "Reactive Speed Line",
+  attach: (p, helpers) => {
+    let prevX = 0;
+    let prevY = 0;
+
+    function resetPrev() {
+      prevX = p.mouseX;
+      prevY = p.mouseY;
+    }
+
+    return {
+      setup: () => {
+        p.background(20);
+        resetPrev();
+      },
+
+      draw: () => {
+        if (p.mouseIsPressed) {
+          // 1) speed
+          const speed = p.dist(p.mouseX, p.mouseY, prevX, prevY);
+
+          // 2) map speed -> weight + alpha
+          const brushWeight = p.map(speed, 0, 40, 1, 30, true);
+          const brushAlpha  = p.map(speed, 0, 40, 50, 255, true);
+
+          // 3) color by position
+          const r = p.map(p.mouseX, 0, p.width, 50, 255, true);
+          const g = p.map(p.mouseY, 0, p.height, 50, 255, true);
+          const b = 150;
+
+          p.stroke(r, g, b, brushAlpha);
+          p.strokeWeight(brushWeight);
+          p.line(p.mouseX, p.mouseY, prevX, prevY);
+
+          prevX = p.mouseX;
+          prevY = p.mouseY;
+        } else {
+          resetPrev();
+        }
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          p.background(20);
+        }
+      }
+    };
+  }
+}
+,{
   name: "Pastel Invaders (CRT shapes)",
   attach: (p, helpers) => {
     let shapes = [];
