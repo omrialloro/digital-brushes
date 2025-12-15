@@ -332,7 +332,72 @@
       }
     };
   }
+},{
+  name: "Magic Brush",
+  attach: (p, helpers) => {
+
+    let brushSize = 60;
+
+    return {
+      setup: () => {
+        p.background(15);
+      },
+
+      draw: () => {
+        if (!p.mouseIsPressed) return;
+        magicBrush(p.mouseX, p.mouseY);
+      },
+
+      keyPressed: () => {
+        if (p.key === "c" || p.key === "C") {
+          p.background(15);
+        }
+      }
+    };
+
+    // =========================
+    // לוגיקת המברשת עצמה
+    // =========================
+    function magicBrush(x, y) {
+      let r = p.random(100, 255);
+      let g = p.random(100, 255);
+      let b = p.random(150, 255);
+
+      // עיגול מרכזי
+      p.noStroke();
+      p.fill(r, g, b, 220);
+      p.circle(x, y, p.random(25, 100));
+
+      // ענן עיגולים
+      for (let i = 0; i < 20; i++) {
+        let ox = p.random(-brushSize, brushSize);
+        let oy = p.random(-brushSize, brushSize);
+        let d  = p.random(5, 25);
+        let a  = p.random(40, 120);
+
+        p.fill(
+          r + p.random(-40, 40),
+          g + p.random(-40, 40),
+          b + p.random(-40, 40),
+          a
+        );
+
+        p.circle(x + ox, y + oy, d);
+      }
+
+      // ניצוצות
+      p.stroke(255, 120);
+      p.strokeWeight(1);
+
+      for (let i = 0; i < 18; i++) {
+        let ox = p.random(-brushSize, brushSize);
+        let oy = p.random(-brushSize, brushSize);
+        p.line(x, y, x + ox, y + oy);
+      }
+    }
+  }
 }
+
 
 ,{
   name: "Pencil Hatch Patch (student)",
@@ -442,7 +507,304 @@
       }
     };
   }
+},{
+  name: "Futuristic LED Brush",
+  attach: (p, helpers) => {
+    let pg;                     // persistent layer
+    let hoverTrail = [];
+    let sparks = [];
+    let fadeOn = true;
+
+    const BG = [8, 10, 16];
+
+    const PALETTE = {
+      cyan:  [90, 220, 255],
+      pink:  [255, 90, 210],
+      white: [235, 245, 255]
+    };
+
+    const SETTINGS = {
+      hoverTrailMax: 18,
+      hoverTrailFade: 18,
+      cursorSize: 10,
+
+      spawnPerPress: 10,
+      spawnWhileHold: 2,
+      holdIntervalFrames: 2,
+
+      sparkLifeMin: 40,
+      sparkLifeMax: 110,
+      speedMin: 2.0,
+      speedMax: 4.2,
+      branchChance: 0.06,
+      branchMaxDepth: 2,
+
+      pgFadeAlpha: 10
+    };
+
+    function ensurePG() {
+      if (!pg || pg.width !== p.width || pg.height !== p.height) {
+        pg = p.createGraphics(p.width, p.height);
+        pg.pixelDensity(1);
+        pg.clear();
+      }
+    }
+
+    function updateHoverTrail() {
+      if (p.mouseX < 0 || p.mouseY < 0 || p.mouseX > p.width || p.mouseY > p.height) return;
+
+      hoverTrail.push({ x: p.mouseX, y: p.mouseY, a: 255 });
+      if (hoverTrail.length > SETTINGS.hoverTrailMax) hoverTrail.shift();
+
+      for (let pt of hoverTrail) pt.a -= SETTINGS.hoverTrailFade;
+      hoverTrail = hoverTrail.filter(pt => pt.a > 0);
+    }
+
+    function drawGlowLine(x1, y1, x2, y2, col, w) {
+      p.push();
+      p.stroke(col);
+      p.strokeWeight(w);
+      p.line(x1, y1, x2, y2);
+
+      p.stroke(p.red(col), p.green(col), p.blue(col), p.alpha(col) * 0.35);
+      p.strokeWeight(w * 2.5);
+      p.line(x1, y1, x2, y2);
+
+      p.stroke(p.red(col), p.green(col), p.blue(col), p.alpha(col) * 0.18);
+      p.strokeWeight(w * 4.2);
+      p.line(x1, y1, x2, y2);
+      p.pop();
+    }
+
+    function drawGlowLinePG(g, x1, y1, x2, y2, col, w) {
+      g.push();
+      g.stroke(col);
+      g.strokeWeight(w);
+      g.line(x1, y1, x2, y2);
+
+      g.stroke(p.red(col), p.green(col), p.blue(col), p.alpha(col) * 0.35);
+      g.strokeWeight(w * 2.5);
+      g.line(x1, y1, x2, y2);
+
+      g.stroke(p.red(col), p.green(col), p.blue(col), p.alpha(col) * 0.18);
+      g.strokeWeight(w * 4.2);
+      g.line(x1, y1, x2, y2);
+      g.pop();
+    }
+
+    function drawServerNode(g, x, y, col, a) {
+      g.push();
+      g.noStroke();
+      g.fill(p.red(col), p.green(col), p.blue(col), a * 0.9);
+      g.rectMode(p.CENTER);
+      g.rect(x, y, 5, 5, 1.5);
+
+      g.fill(PALETTE.white[0], PALETTE.white[1], PALETTE.white[2], a * 0.8);
+      g.circle(x + p.random(-2, 2), y + p.random(-2, 2), 2.5);
+
+      g.fill(p.red(col), p.green(col), p.blue(col), a * 0.25);
+      g.circle(x, y, 16);
+      g.pop();
+    }
+
+    function drawLedFlower(g, x, y, baseRGB) {
+      const petals = p.floor(p.random(5, 9));
+      const radius = p.random(7, 13);
+      const col = p.color(baseRGB[0], baseRGB[1], baseRGB[2], 200);
+
+      g.push();
+
+      for (let i = 0; i < petals; i++) {
+        const ang = (p.TWO_PI / petals) * i + p.random(-0.2, 0.2);
+        const px = x + p.cos(ang) * radius;
+        const py = y + p.sin(ang) * radius;
+
+        drawGlowLinePG(g, x, y, px, py, col, 1.5);
+
+        g.noStroke();
+        g.fill(baseRGB[0], baseRGB[1], baseRGB[2], 180);
+        g.circle(px, py, 4);
+      }
+
+      g.noStroke();
+      g.fill(PALETTE.white[0], PALETTE.white[1], PALETTE.white[2], 240);
+      g.circle(x, y, 4.8);
+
+      g.fill(baseRGB[0], baseRGB[1], baseRGB[2], 80);
+      g.circle(x, y, 20);
+
+      g.pop();
+    }
+
+    function spawnNetwork(x, y, n, depth) {
+      x = p.constrain(x, 0, p.width);
+      y = p.constrain(y, 0, p.height);
+
+      for (let i = 0; i < n; i++) {
+        const angle = p.random(p.TWO_PI);
+        const speed = p.random(SETTINGS.speedMin, SETTINGS.speedMax);
+        const vx = p.cos(angle) * speed;
+        const vy = p.sin(angle) * speed;
+        sparks.push(new Spark(x, y, vx, vy, depth));
+      }
+    }
+
+    class Spark {
+      constructor(x, y, vx, vy, depth) {
+        this.pos = p.createVector(x, y);
+        this.vel = p.createVector(vx, vy);
+        this.prev = this.pos.copy();
+
+        this.depth = depth;
+        this.life = p.floor(p.random(SETTINGS.sparkLifeMin, SETTINGS.sparkLifeMax));
+        this.age = 0;
+        this.dead = false;
+
+        this.baseCol = (p.random() < 0.5) ? PALETTE.cyan : PALETTE.pink;
+      }
+
+      update() {
+        if (this.dead) return;
+
+        const n = p.noise(this.pos.x * 0.006, this.pos.y * 0.006, p.frameCount * 0.01);
+        const turn = p.map(n, 0, 1, -0.22, 0.22);
+
+        this.vel.rotate(turn);
+        this.vel.mult(0.99);
+
+        this.prev = this.pos.copy();
+        this.pos.add(this.vel);
+
+        if (this.pos.x < 0 || this.pos.x > p.width) this.vel.x *= -1;
+        if (this.pos.y < 0 || this.pos.y > p.height) this.vel.y *= -1;
+        this.pos.x = p.constrain(this.pos.x, 0, p.width);
+        this.pos.y = p.constrain(this.pos.y, 0, p.height);
+
+        const a = p.map(this.age, 0, this.life, 200, 40);
+        const col = p.color(this.baseCol[0], this.baseCol[1], this.baseCol[2], a);
+
+        pg.push();
+        pg.blendMode(p.ADD);
+        drawGlowLinePG(pg, this.prev.x, this.prev.y, this.pos.x, this.pos.y, col, 1.8);
+
+        if (p.random() < 0.08) drawServerNode(pg, this.pos.x, this.pos.y, col, a);
+
+        pg.pop();
+
+        if (this.depth < SETTINGS.branchMaxDepth && p.random() < SETTINGS.branchChance) {
+          const childVel = this.vel.copy().rotate(p.random([-1, 1]) * p.random(0.35, 0.9));
+          childVel.mult(p.random(0.7, 0.95));
+          sparks.push(new Spark(this.pos.x, this.pos.y, childVel.x, childVel.y, this.depth + 1));
+        }
+
+        this.age++;
+        if (this.age >= this.life) {
+          pg.push();
+          pg.blendMode(p.ADD);
+          drawLedFlower(pg, this.pos.x, this.pos.y, this.baseCol);
+          pg.pop();
+          this.dead = true;
+        }
+      }
+    }
+
+    function drawHoverTrail() {
+      p.push();
+      p.blendMode(p.ADD);
+
+      for (let i = 1; i < hoverTrail.length; i++) {
+        const p0 = hoverTrail[i - 1];
+        const p1 = hoverTrail[i];
+
+        const t = i / hoverTrail.length;
+        const col = p.lerpColor(
+          p.color(PALETTE.cyan[0], PALETTE.cyan[1], PALETTE.cyan[2], p1.a),
+          p.color(PALETTE.pink[0], PALETTE.pink[1], PALETTE.pink[2], p1.a),
+          t
+        );
+
+        drawGlowLine(p0.x, p0.y, p1.x, p1.y, col, 2.0);
+      }
+
+      p.pop();
+    }
+
+    function drawLedCursor(x, y) {
+      p.push();
+      p.blendMode(p.ADD);
+
+      p.noStroke();
+      for (let r = 28; r >= 10; r -= 6) {
+        p.fill(PALETTE.cyan[0], PALETTE.cyan[1], PALETTE.cyan[2], p.map(r, 28, 10, 18, 80));
+        p.circle(x, y, r);
+      }
+
+      p.fill(PALETTE.white[0], PALETTE.white[1], PALETTE.white[2], 230);
+      p.circle(x, y, SETTINGS.cursorSize);
+
+      p.pop();
+    }
+
+    return {
+      setup: () => {
+        ensurePG();
+        p.noCursor();
+        // לא נוגעים ב-colorMode הגלובלי כדי לא להרוס מברשות אחרות
+      },
+
+      draw: () => {
+        ensurePG();
+
+        // רקע ל"תצוגה" (לא מוחק את pg, רק את ה-canvas הראשי)
+        p.background(BG[0], BG[1], BG[2]);
+
+        // דהייה של שכבת הציור (pg)
+        if (fadeOn) {
+          pg.push();
+          pg.noStroke();
+          pg.fill(0, 0, 0, SETTINGS.pgFadeAlpha);
+          pg.rect(0, 0, p.width, p.height);
+          pg.pop();
+        }
+
+        // תוך כדי לחיצה - גדילה
+        if (p.mouseIsPressed && (p.frameCount % SETTINGS.holdIntervalFrames === 0)) {
+          spawnNetwork(p.mouseX, p.mouseY, SETTINGS.spawnWhileHold, 0);
+        }
+
+        // עדכון sparks
+        for (let i = sparks.length - 1; i >= 0; i--) {
+          sparks[i].update();
+          if (sparks[i].dead) sparks.splice(i, 1);
+        }
+
+        // ציור השכבה המתמשכת
+        p.image(pg, 0, 0);
+
+        // Hover overlay
+        updateHoverTrail();
+        drawHoverTrail();
+        drawLedCursor(p.mouseX, p.mouseY);
+      },
+
+      mousePressed: () => {
+        ensurePG();
+        spawnNetwork(p.mouseX, p.mouseY, SETTINGS.spawnPerPress, 0);
+      },
+
+      keyPressed: () => {
+        if (p.key === 'c' || p.key === 'C') {
+          ensurePG();
+          pg.clear();
+        }
+        if (p.key === 'f' || p.key === 'F') {
+          fadeOn = !fadeOn;
+        }
+      }
+    };
+  }
 }
+
 ,{
   name: "Generative Tribe Brush (agents)",
   attach: (p, helpers) => {
@@ -1982,3 +2344,4 @@
   </script>
 </body>
 </html>
+
